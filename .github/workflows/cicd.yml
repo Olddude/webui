@@ -31,6 +31,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            dist
+            .vite
+          key: ${{ runner.os }}-build-${{ hashFiles('**/package-lock.json', 'src/**/*', 'index.html', 'vite.config.ts', 'tsconfig*.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
+
       - name: Audit
         run: npm audit || true
 
@@ -46,10 +56,28 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Set package version
+        id: package
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
       - name: Publish
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
+          # Set image name with proper GHCR format
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/webui"
+          IMAGE_TAG="${{ github.sha }}"
+          PACKAGE_VERSION="${{ steps.package.outputs.version }}"
+
+          # Build the container
           npm run package
-          podman login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-          npm run package:tag
-          podman push ghcr.io/olddude/webui
+
+          # Login to GHCR
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          # Tag with commit SHA and latest
+          podman tag webui:${PACKAGE_VERSION} ${IMAGE_NAME}:${IMAGE_TAG}
+          podman tag webui:${PACKAGE_VERSION} ${IMAGE_NAME}:latest
+
+          # Push both tags
+          podman push ${IMAGE_NAME}:${IMAGE_TAG}
+          podman push ${IMAGE_NAME}:latest

@@ -11,6 +11,7 @@ RUN npm run build
 
 # Runtime stage
 FROM nginx:alpine3.21-slim as runtime
+ARG WEBUI_AGENT_BACKEND_BASE_URL=http://host.docker.internal:3004
 ENV WEBUI_AGENT_BACKEND_BASE_URL=$WEBUI_AGENT_BACKEND_BASE_URL
 
 RUN apk add --no-cache \
