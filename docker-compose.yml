@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  webui:
+    build: .
+    ports:
+      - '8080:80'
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  # Example backend service (adjust according to your actual backend)
+  backend:
+    # Replace with your actual backend image or build configuration
+    image: your-backend-image:latest
+    ports:
+      - '3004:3004'
+    restart: unless-stopped
+    networks:
+      - app-network
+    # Add environment variables, volumes, etc. as needed
+
+networks:
+  app-network:
+    driver: bridge
