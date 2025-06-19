@@ -12,10 +12,7 @@
     "build": "tsc -b && vite build",
     "format": "eslint . && prettier --write .",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "package": "podman build --build-arg WEBUI_AGENT_BACKEND_BASE_URL=$WEBUI_AGENT_BACKEND_BASE_URL -t $npm_package_name:$npm_package_version .",
-    "package:run": "podman run -p 8080:80 -e WEBUI_AGENT_BACKEND_BASE_URL=${WEBUI_AGENT_BACKEND_BASE_URL:-http://host.docker.internal:3004} $npm_package_name:$npm_package_version",
-    "package:tag": "podman tag $npm_package_name:$npm_package_version ghcr.io/olddude/$npm_package_name:$npm_package_version"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
