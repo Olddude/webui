@@ -1,0 +1,45 @@
+name: CI/CD Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  NPM_CONFIG_CACHE: "${{ github.workspace }}/.npm"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Clean
+        run: |
+          rm -rf ${{ env.NPM_CONFIG_CACHE }}
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Audit
+        run: npm audit || true
+
+      - name: Install
+        run: npm ci
+
+      - name: Outdated
+        run: npm outdated || true
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
