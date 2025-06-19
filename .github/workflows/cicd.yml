@@ -1,0 +1,62 @@
+name: CI/CD Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  NODE_VERSION: "22.x"
+  NPM_CONFIG_LOGLEVEL: "warn"
+  NPM_CONFIG_PROGRESS: "false"
+  NPM_CONFIG_CACHE: "${{ github.workspace }}/.npm"
+  NPM_CONFIG_USERCONFIG: "${{ github.workspace }}/.npmrc"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@olddude"
+
+      - name: Auth
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+          echo "@olddude:registry=https://npm.pkg.github.com" >> ~/.npmrc
+
+      - name: Cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Audit
+        run: npm audit || true
+
+      - name: Install
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Outdated
+        run: npm outdated || true
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
