@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webui
+    ports:
+      - '9000:80'
+    environment:
+      - WEBUI_AGENT_BACKEND_BASE_URL=http://host.docker.internal:3004
+    restart: unless-stopped
+    networks:
+      - webui_network
+
+networks:
+  webui_network:
+    driver: bridge

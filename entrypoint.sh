@@ -53,7 +53,7 @@ fi
 
 # Show directory structure for debugging
 log_info "Current directory structure:"
-tree . -L 5
+tree . -L 2
 
 # Start nginx
 log_info "Starting nginx..."
