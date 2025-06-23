@@ -8,6 +8,7 @@ services:
     container_name: webui
     ports:
       - '9000:80'
+      - '9001:443'
     environment:
       - WEBUI_AGENT_BACKEND_BASE_URL=http://host.docker.internal:3004
     restart: unless-stopped
