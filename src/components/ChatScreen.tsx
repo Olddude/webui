@@ -250,9 +250,16 @@ export default function ChatScreen() {
         {/* chat input */}
         <div className="flex flex-row items-center pt-8 pb-6 sticky bottom-0 bg-base-100">
           <textarea
-            className="textarea textarea-bordered w-full"
-            placeholder="Type a message (Shift+Enter to add a new line)"
+            className={`textarea textarea-bordered w-full ${
+              isGenerating(currConvId ?? '') ? 'textarea-disabled opacity-60' : ''
+            }`}
+            placeholder={
+              isGenerating(currConvId ?? '')
+                ? "Agent is thinking... Click Stop to interrupt"
+                : "Type a message (Shift+Enter to add a new line)"
+            }
             ref={textarea.ref}
+            disabled={isGenerating(currConvId ?? '')}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === 'Enter' && e.shiftKey) return;
