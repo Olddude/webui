@@ -10,7 +10,12 @@ The existing web UI is a React-based OpenAI-compatible chat client with:
 
 - **Frontend**: React + TypeScript with Vite
 - **Backend**: OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`, etc.)
-- **Message System**: Tree-structured conversations with branching support
+- **Message System**: Tree-structured con5. **Rollback Capability**: Checkpoint system enables safe experimentation
+
+### Enhanced Configuration
+
+Add to existing `CONFIG_DEFAULT`:tions with branching support
+
 - **Storage**: Local storage for conversations and configuration
 - **Real-time**: SSE (Server-Sent Events) for streaming responses
 
@@ -336,3 +341,494 @@ export const CONFIG_DEFAULT = {
 This design pattern transforms the static web UI into a dynamic, extensible platform that can grow with the MCP ecosystem. By implementing bidirectional control between frontend and backend, we enable both immediate tool access and sophisticated agent-driven workflows while maintaining excellent user experience.
 
 The phased implementation approach ensures we can validate concepts early and iterate based on user feedback, while the comprehensive API design provides a solid foundation for future enhancements.
+
+### Cline-Inspired Design Patterns
+
+Based on analysis of the successful Cline VSCode extension, we can adopt several proven patterns:
+
+#### 1. gRPC-Based Communication Pattern
+
+**Cline's Approach**: Uses gRPC streaming for real-time bidirectional communication between extension host and webview.
+
+**Adaptation for Web UI**:
+
+```typescript
+// WebSocket-based streaming service (instead of gRPC)
+class MCPStreamingService {
+  private ws: WebSocket;
+  private subscriptions: Map<string, Set<(data: any) => void>> = new Map();
+
+  constructor() {
+    this.ws = new WebSocket(`ws://${window.location.host}/v1/mcp/stream`);
+    this.setupEventHandlers();
+  }
+
+  // Subscribe to MCP tool updates
+  subscribeToToolUpdates(callback: (tools: MCPTool[]) => void): () => void {
+    return this.subscribe('mcp.tools.updated', callback);
+  }
+
+  // Subscribe to agent handoff events
+  subscribeToAgentHandoff(callback: (session: AgentSession) => void): () => void {
+    return this.subscribe('agent.handoff', callback);
+  }
+
+  // Subscribe to tool invocation results
+  subscribeToToolResults(callback: (result: ToolResult) => void): () => void {
+    return this.subscribe('tool.result', callback);
+  }
+
+  private subscribe(event: string, callback: (data: any) => void): () => void {
+    if (!this.subscriptions.has(event)) {
+      this.subscriptions.set(event, new Set());
+    }
+    this.subscriptions.get(event)!.add(callback);
+    
+    return () => {
+      this.subscriptions.get(event)?.delete(callback);
+    };
+  }
+}
+```
+
+#### 2. Context-Driven State Management
+
+**Cline's Approach**: Uses React Context with extensive state management and subscription cleanup.
+
+**Adaptation**:
+
+```typescript
+interface MCPContextType {
+  // Tool Management
+  tools: MCPTool[];
+  activeTools: Set<string>;
+  toolHistory: ToolInvocation[];
+  
+  // Agent Sessions
+  agentSessions: Map<string, AgentSession>;
+  activeSession: string | null;
+  
+  // Debug Interface
+  debugMode: boolean;
+  debugMessages: DebugMessage[];
+  
+  // Actions
+  invokeTool: (toolId: string, params: any) => Promise<any>;
+  requestAgentHandoff: (context: HandoffContext) => Promise<string>;
+  cancelAgentSession: (sessionId: string) => void;
+  
+  // Subscriptions (Cline pattern)
+  onToolUpdate: (callback: (tools: MCPTool[]) => void) => () => void;
+  onAgentProgress: (callback: (progress: AgentProgress) => void) => () => void;
+  onDebugMessage: (callback: (msg: DebugMessage) => void) => () => void;
+}
+
+export const MCPContextProvider: React.FC<{ children: React.ReactNode }> = ({ 
+  children 
+}) => {
+  const [tools, setTools] = useState<MCPTool[]>([]);
+  const [agentSessions, setAgentSessions] = useState<Map<string, AgentSession>>(new Map());
+  const streamingService = useRef<MCPStreamingService>();
+  
+  // Subscription refs for cleanup (Cline pattern)
+  const toolUpdateUnsubscribeRef = useRef<(() => void) | null>(null);
+  const agentHandoffUnsubscribeRef = useRef<(() => void) | null>(null);
+  const debugMessageUnsubscribeRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    streamingService.current = new MCPStreamingService();
+    
+    // Set up subscriptions
+    toolUpdateUnsubscribeRef.current = streamingService.current.subscribeToToolUpdates(
+      (updatedTools) => {
+        console.log('[DEBUG] Received tool updates:', updatedTools);
+        setTools(updatedTools);
+      }
+    );
+
+    agentHandoffUnsubscribeRef.current = streamingService.current.subscribeToAgentHandoff(
+      (session) => {
+        console.log('[DEBUG] Agent handoff initiated:', session);
+        setAgentSessions(prev => new Map(prev).set(session.id, session));
+      }
+    );
+
+    // Cleanup subscriptions on unmount (Cline pattern)
+    return () => {
+      if (toolUpdateUnsubscribeRef.current) {
+        toolUpdateUnsubscribeRef.current();
+        toolUpdateUnsubscribeRef.current = null;
+      }
+      if (agentHandoffUnsubscribeRef.current) {
+        agentHandoffUnsubscribeRef.current();
+        agentHandoffUnsubscribeRef.current = null;
+      }
+      if (debugMessageUnsubscribeRef.current) {
+        debugMessageUnsubscribeRef.current();
+        debugMessageUnsubscribeRef.current = null;
+      }
+    };
+  }, []);
+
+  // ...rest of implementation
+};
+```
+
+#### 3. Tool Capability Detection & Dynamic Registration
+
+**Cline's Approach**: Dynamic MCP server detection and tool registration based on capabilities.
+
+**Adaptation**:
+
+```typescript
+class DynamicMCPManager {
+  private toolCapabilities: Map<string, ToolCapability> = new Map();
+  private serverConnections: Map<string, MCPServerConnection> = new Map();
+
+  async discoverAndRegisterTools(): Promise<void> {
+    // Discover available MCP servers
+    const servers = await this.discoverMCPServers();
+    
+    for (const server of servers) {
+      try {
+        const connection = await this.connectToServer(server);
+        const tools = await connection.listTools();
+        
+        tools.forEach(tool => {
+          // Determine capability requirements
+          const capability = this.analyzeToolCapability(tool);
+          this.toolCapabilities.set(tool.id, capability);
+          
+          // Register tool with appropriate handler
+          this.registerToolHandler(tool, capability);
+        });
+        
+        this.serverConnections.set(server.id, connection);
+      } catch (error) {
+        console.warn(`Failed to connect to MCP server ${server.id}:`, error);
+      }
+    }
+  }
+
+  private analyzeToolCapability(tool: MCPTool): ToolCapability {
+    // Cline-style capability detection
+    const isComplex = tool.parameters?.properties && 
+                     Object.keys(tool.parameters.properties).length > 3;
+    const requiresHandoff = tool.metadata?.requiresHandoff ||
+                           tool.description.includes('complex') ||
+                           tool.description.includes('multi-step');
+    
+    return {
+      type: requiresHandoff ? 'agent_required' : 'direct_invoke',
+      complexity: isComplex ? 'high' : 'low',
+      permissions: this.extractPermissions(tool),
+      estimatedDuration: this.estimateExecutionTime(tool)
+    };
+  }
+}
+```
+
+#### 4. Agent Control Flow (Human-in-the-Loop)
+
+**Cline's Approach**: Every action requires user approval with clear indication of what will happen.
+
+**Adaptation**:
+
+```typescript
+interface AgentControlFlow {
+  requestUserPermission: (action: ProposedAction) => Promise<boolean>;
+  showProgress: (progress: AgentProgress) => void;
+  allowInterruption: (sessionId: string) => void;
+  transferControl: (from: 'user' | 'agent', to: 'user' | 'agent') => void;
+}
+
+class AgentSessionManager implements AgentControlFlow {
+  async requestUserPermission(action: ProposedAction): Promise<boolean> {
+    return new Promise((resolve) => {
+      // Show modal with action details (Cline pattern)
+      const modal = this.createPermissionModal({
+        title: `Agent wants to ${action.type}`,
+        description: action.description,
+        toolsInvolved: action.tools,
+        estimatedTime: action.estimatedDuration,
+        onApprove: () => resolve(true),
+        onDeny: () => resolve(false),
+        onPause: () => this.pauseSession(action.sessionId)
+      });
+      
+      document.body.appendChild(modal);
+    });
+  }
+
+  showProgress(progress: AgentProgress): void {
+    // Real-time progress display (like Cline's task progress)
+    this.updateProgressUI({
+      sessionId: progress.sessionId,
+      currentStep: progress.currentStep,
+      totalSteps: progress.totalSteps,
+      message: progress.message,
+      toolsUsed: progress.toolsUsed,
+      canCancel: true
+    });
+  }
+}
+```
+
+#### 5. Checkpoint & Restore System
+
+**Cline's Approach**: Automatic workspace snapshots at each step with compare/restore functionality.
+
+**Adaptation**:
+
+```typescript
+interface CheckpointSystem {
+  createCheckpoint: (label: string, context: any) => Promise<string>;
+  restoreCheckpoint: (checkpointId: string) => Promise<void>;
+  compareCheckpoints: (id1: string, id2: string) => Promise<Diff[]>;
+  listCheckpoints: () => Promise<Checkpoint[]>;
+}
+
+class MCPCheckpointManager implements CheckpointSystem {
+  async createCheckpoint(label: string, context: any): Promise<string> {
+    const checkpoint: Checkpoint = {
+      id: generateId(),
+      timestamp: Date.now(),
+      label,
+      context: {
+        conversation: context.conversation,
+        toolStates: await this.captureToolStates(),
+        agentSessions: context.agentSessions,
+        userPreferences: context.userPreferences
+      }
+    };
+    
+    await this.saveCheckpoint(checkpoint);
+    return checkpoint.id;
+  }
+
+  async restoreCheckpoint(checkpointId: string): Promise<void> {
+    const checkpoint = await this.loadCheckpoint(checkpointId);
+    if (!checkpoint) throw new Error('Checkpoint not found');
+    
+    // Restore conversation state
+    await this.restoreConversation(checkpoint.context.conversation);
+    
+    // Restore tool states
+    await this.restoreToolStates(checkpoint.context.toolStates);
+    
+    // Cancel any active agent sessions
+    await this.cancelActiveSessions();
+    
+    // Restore agent sessions if any
+    await this.restoreAgentSessions(checkpoint.context.agentSessions);
+  }
+}
+```
+
+#### 6. Debug Interface Integration
+
+**Cline's Approach**: Rich debugging capabilities with console access and real-time inspection.
+
+**Enhanced Implementation**:
+
+```typescript
+// Global debug interface (enhanced from original design)
+declare global {
+  interface Window {
+    mcpDebug: {
+      // Tool Management
+      listAvailableTools: () => MCPTool[];
+      inspectTool: (toolId: string) => ToolInspection;
+      invokeTool: (toolId: string, params: any) => Promise<any>;
+      
+      // Agent Management  
+      getActiveSessions: () => AgentSession[];
+      inspectSession: (sessionId: string) => SessionInspection;
+      triggerHandoff: (context: any) => Promise<string>;
+      cancelSession: (sessionId: string) => void;
+      
+      // Checkpoint Management
+      createCheckpoint: (label: string) => Promise<string>;
+      listCheckpoints: () => Checkpoint[];
+      restoreCheckpoint: (id: string) => Promise<void>;
+      
+      // Real-time Monitoring
+      monitorToolInvocations: (callback: (inv: ToolInvocation) => void) => () => void;
+      monitorAgentProgress: (callback: (progress: AgentProgress) => void) => () => void;
+      
+      // Advanced Debug Features
+      traceExecution: (enable: boolean) => void;
+      dumpState: () => any;
+      injectDebugMessage: (message: string) => void;
+    };
+  }
+}
+```
+
+#### 7. Enhanced API Design
+
+**Building on Cline's patterns**:
+
+```typescript
+// WebSocket-based real-time API (instead of HTTP polling)
+interface MCPWebSocketAPI {
+  // Tool Discovery & Management
+  'mcp.tools.list': () => MCPTool[];
+  'mcp.tools.updated': (tools: MCPTool[]) => void;
+  'mcp.tool.invoke': (toolId: string, params: any) => Promise<any>;
+  
+  // Agent Handoff & Control
+  'agent.handoff.request': (context: HandoffContext) => Promise<AgentSession>;
+  'agent.progress': (sessionId: string, progress: AgentProgress) => void;
+  'agent.handoff.complete': (sessionId: string, result: any) => void;
+  
+  // Real-time Updates
+  'conversation.updated': (conversation: Conversation) => void;
+  'debug.message': (message: DebugMessage) => void;
+  
+  // Checkpoint Events
+  'checkpoint.created': (checkpoint: Checkpoint) => void;
+  'checkpoint.restored': (checkpointId: string) => void;
+}
+```
+
+### Integration Plan
+
+1. **Phase 1**: Implement WebSocket-based streaming service
+2. **Phase 2**: Add context-driven state management with subscription cleanup
+3. **Phase 3**: Implement agent control flow with user permission system
+4. **Phase 4**: Add checkpoint/restore capabilities
+5. **Phase 5**: Enhance debug interface with real-time monitoring
+
+### Benefits of Cline Patterns
+
+1. **Proven Reliability**: Battle-tested in production VSCode environment
+2. **Real-time Communication**: WebSocket streaming enables immediate updates
+3. **User Trust**: Human-in-the-loop approval process builds confidence
+4. **Developer Experience**: Rich debugging capabilities
+5. **State Management**: Robust subscription cleanup prevents memory leaks
+6. **Rollback Capability**: Checkpoint system enables safe experimentation
+
+## Official MCP TypeScript SDK Integration
+
+**Excellent Discovery**: Instead of building custom communication patterns from scratch, we should leverage the official `@modelcontextprotocol/sdk` which provides robust, standardized MCP client and server implementations.
+
+### Key Advantages
+
+1. **Standardized Protocol**: Full MCP specification compliance
+2. **Multiple Transports**: stdio, HTTP, Streamable HTTP support out of the box  
+3. **Type Safety**: Complete TypeScript definitions
+4. **Built-in Error Handling**: Connection management and recovery
+5. **Resource Management**: Native support for MCP resources and templates
+6. **Tool Discovery**: Automatic capability detection
+
+### Implementation Strategy
+
+Replace our custom streaming service with the official SDK:
+
+```bash
+npm install @modelcontextprotocol/sdk zod
+```
+
+```typescript
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+class MCPClientManager {
+  private clients = new Map<string, Client>();
+
+  async connectToServer(config: MCPServerConfig): Promise<Client> {
+    const client = new Client({ name: "webui-mcp-client", version: "1.0.0" });
+    
+    const transport = config.type === 'stdio' 
+      ? new StdioClientTransport({ command: config.command, args: config.args })
+      : new StreamableHTTPClientTransport(new URL(config.url));
+
+    await client.connect(transport);
+    this.clients.set(config.id, client);
+    return client;
+  }
+
+  async discoverTools(): Promise<MCPTool[]> {
+    const allTools: MCPTool[] = [];
+    for (const [serverId, client] of this.clients) {
+      const tools = await client.listTools();
+      allTools.push(...tools.tools.map(tool => ({ ...tool, serverId })));
+    }
+    return allTools;
+  }
+
+  async invokeTool(serverId: string, name: string, arguments: any) {
+    const client = this.clients.get(serverId);
+    if (!client) throw new Error(`Server ${serverId} not connected`);
+    return await client.callTool({ name, arguments });
+  }
+}
+```
+
+### Enhanced Configuration
+
+Add to existing `CONFIG_DEFAULT`:
+
+```typescript
+export const CONFIG_DEFAULT = {
+  // ...existing config...
+  
+  // MCP SDK Configuration  
+  mcpEnabled: true,
+  mcpAutoConnect: true,
+  mcpConnectionTimeout: 10000,
+  mcpRetryAttempts: 3,
+  mcpRetryDelay: 2000,
+  
+  // Server configurations
+  mcpServers: [
+    {
+      id: 'local-files',
+      name: 'File System Server',
+      type: 'stdio',
+      command: 'node',
+      args: ['mcp-servers/filesystem.js'],
+      autoConnect: true
+    },
+    {
+      id: 'remote-api',
+      name: 'Remote API Server', 
+      type: 'http',
+      url: 'http://localhost:3001/mcp',
+      autoConnect: false
+    }
+  ] as MCPServerConfig[],
+  
+  // Tool preferences
+  mcpToolTimeout: 30000,
+  mcpToolRetries: 2,
+  mcpPreferredToolCategories: ['file-system', 'api', 'database'],
+  
+  // Agent handoff settings (enhanced)
+  mcpAgentHandoffEnabled: true,
+  mcpMaxHandoffDuration: 300000, // 5 minutes
+  mcpHandoffComplexityThreshold: 'moderate',
+  mcpAgentProgressUpdates: true,
+};
+```
+
+## Final Implementation Recommendation
+
+### Revised Architecture
+
+1. **Use Official MCP SDK** instead of custom WebSocket streaming
+2. **Adopt Cline's proven patterns** for state management and UI
+3. **Implement progressive enhancement** starting with simple tool discovery
+4. **Add agent handoff capabilities** for complex workflows
+5. **Include comprehensive debugging tools** for development
+
+### Next Steps
+
+1. **Install Dependencies**: `@modelcontextprotocol/sdk`, `zod`
+2. **Create MCPClientManager**: Manage connections to MCP servers
+3. **Enhance AppContext**: Add MCP state management
+4. **Build UI Components**: Tool discovery, agent handoff, debug interface
+5. **Add Configuration**: MCP server settings in user preferences
+
+This design provides a robust foundation for dynamic MCP tool integration while leveraging proven patterns from successful AI agent implementations.
