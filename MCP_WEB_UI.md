@@ -813,22 +813,143 @@ export const CONFIG_DEFAULT = {
 };
 ```
 
+## Implementation Strategy: BFF vs Frontend MCP Client
+
+### Analysis Summary
+
+**Current Architecture Constraints:**
+
+- 1.5MB bundle size limit (single-file build)
+- Existing `/v1` proxy pattern to backend
+- OpenAI-compatible backend design
+- No existing WebSocket infrastructure
+
+### **Recommended: Hybrid BFF-Primary Architecture**
+
+#### Primary MCP Client in BFF (Backend-for-Frontend)
+
+**Implementation:**
+
+```typescript
+// Backend: MCP Service Layer
+class MCPService {
+  private clients = new Map<string, Client>();
+  
+  async initializeServers(configs: MCPServerConfig[]) {
+    for (const config of configs) {
+      const client = new Client({ name: "webui-mcp", version: "1.0.0" });
+      const transport = this.createTransport(config);
+      await client.connect(transport);
+      this.clients.set(config.id, client);
+    }
+  }
+  
+  async getAvailableTools(): Promise<MCPTool[]> {
+    const allTools = [];
+    for (const [serverId, client] of this.clients) {
+      const { tools } = await client.listTools();
+      allTools.push(...tools.map(t => ({ ...t, serverId })));
+    }
+    return allTools;
+  }
+  
+  async invokeTool(serverId: string, name: string, args: any) {
+    const client = this.clients.get(serverId);
+    return await client.callTool({ name, arguments: args });
+  }
+}
+```
+
+**New API Endpoints:**
+
+```text
+GET  /v1/mcp/tools                    # Tool discovery
+POST /v1/mcp/tools/invoke             # Tool invocation
+GET  /v1/mcp/servers                  # Server status
+POST /v1/mcp/servers/{id}/connect     # Connect to server
+POST /v1/mcp/handoff                  # Agent handoff
+```
+
+#### Lightweight Frontend MCP Interface
+
+**Implementation:**
+
+```typescript
+// Frontend: Lightweight MCP API wrapper
+class MCPApiClient {
+  async getTools(): Promise<MCPTool[]> {
+    const response = await fetch('/v1/mcp/tools');
+    return response.json();
+  }
+  
+  async invokeTool(serverId: string, toolName: string, params: any) {
+    return fetch('/v1/mcp/tools/invoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serverId, toolName, params })
+    }).then(r => r.json());
+  }
+  
+  // SSE for real-time updates
+  subscribeToUpdates(callback: (event: MCPEvent) => void) {
+    const eventSource = new EventSource('/v1/mcp/events');
+    eventSource.onmessage = (e) => callback(JSON.parse(e.data));
+    return () => eventSource.close();
+  }
+}
+```
+
+### Benefits of BFF-Primary Approach
+
+1. **Bundle Size**: Keeps `@modelcontextprotocol/sdk` out of frontend bundle
+2. **Security**: MCP servers run in secure backend environment
+3. **Performance**: Connection pooling, caching, and resource sharing
+4. **Compatibility**: Leverages existing proxy architecture
+5. **Scalability**: Multiple frontend clients share backend connections
+6. **Error Handling**: Centralized retry logic and connection management
+
+### Hybrid Elements
+
+**For Development/Debug**: Optional lightweight MCP client in frontend
+
+```typescript
+// Only in development builds
+if (import.meta.env.DEV) {
+  const { Client } = await import('@modelcontextprotocol/sdk/client');
+  window.mcpDebugClient = new Client({ name: "debug", version: "1.0.0" });
+}
+```
+
 ## Final Implementation Recommendation
 
 ### Revised Architecture
 
-1. **Use Official MCP SDK** instead of custom WebSocket streaming
-2. **Adopt Cline's proven patterns** for state management and UI
-3. **Implement progressive enhancement** starting with simple tool discovery
-4. **Add agent handoff capabilities** for complex workflows
-5. **Include comprehensive debugging tools** for development
+1. **BFF-Primary MCP Integration**: Use `@modelcontextprotocol/sdk` in backend
+2. **Lightweight Frontend API**: HTTP + SSE for real-time updates  
+3. **Adopt Cline's proven patterns** for state management and UI
+4. **Implement progressive enhancement** starting with simple tool discovery
+5. **Add agent handoff capabilities** for complex workflows
+6. **Include comprehensive debugging tools** for development
 
 ### Next Steps
 
-1. **Install Dependencies**: `@modelcontextprotocol/sdk`, `zod`
-2. **Create MCPClientManager**: Manage connections to MCP servers
-3. **Enhance AppContext**: Add MCP state management
-4. **Build UI Components**: Tool discovery, agent handoff, debug interface
-5. **Add Configuration**: MCP server settings in user preferences
+1. **Backend Dependencies**: Install `@modelcontextprotocol/sdk`, `zod` in BFF
+2. **Create MCPService**: Manage connections to MCP servers in backend
+3. **Add API Endpoints**: `/v1/mcp/*` routes for tool discovery and invocation
+4. **Frontend MCPApiClient**: Lightweight wrapper for MCP operations
+5. **Enhance AppContext**: Add MCP state management with SSE subscriptions
+6. **Build UI Components**: Tool discovery, agent handoff, debug interface
+7. **Add Configuration**: MCP server settings in user preferences
 
-This design provides a robust foundation for dynamic MCP tool integration while leveraging proven patterns from successful AI agent implementations.
+### Trade-off Summary
+
+| Aspect | BFF Primary | Frontend Primary |
+|--------|-------------|------------------|
+| Bundle Size | ✅ Minimal impact | ❌ +500KB+ |
+| Security | ✅ Server-side | ❌ Browser limitations |
+| Latency | ⚠️ Extra hop | ✅ Direct |
+| Scalability | ✅ Shared connections | ❌ Per-tab connections |
+| Development | ✅ Simpler debugging | ⚠️ Complex state |
+| Architecture Fit | ✅ Matches existing | ❌ Requires restructure |
+
+This design provides a robust, scalable foundation for dynamic MCP tool integration while respecting current architecture constraints and bundle size requirements.
