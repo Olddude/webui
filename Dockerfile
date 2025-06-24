@@ -13,6 +13,7 @@ RUN apk add --no-cache \
     gzip \
     tree \
     bash \
+    openssl \
     && rm -rf /var/cache/apk/*
 
 RUN rm -rf /usr/share/nginx/html/*
@@ -23,6 +24,6 @@ COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 80
+EXPOSE 80 443
 LABEL org.opencontainers.image.source https://github.com/olddude/webui
 CMD ["/entrypoint.sh"]

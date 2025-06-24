@@ -36,6 +36,19 @@ fi
 
 log_info "Backend URL: $WEBUI_AGENT_BACKEND_BASE_URL"
 
+# Generate self-signed SSL certificate for HTTP/2 and HTTP/3 support
+log_info "Generating self-signed SSL certificate for HTTPS/HTTP2/HTTP3..."
+if [ ! -f /etc/ssl/certs/nginx.crt ] || [ ! -f /etc/ssl/private/nginx.key ]; then
+    mkdir -p /etc/ssl/certs /etc/ssl/private
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/nginx.key \
+        -out /etc/ssl/certs/nginx.crt \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+    log_success "SSL certificate generated"
+else
+    log_info "SSL certificate already exists"
+fi
+
 # Process nginx configuration
 log_info "Processing nginx configuration template..."
 envsubst '${WEBUI_AGENT_BACKEND_BASE_URL}' </etc/nginx/nginx.conf >/tmp/nginx.conf
